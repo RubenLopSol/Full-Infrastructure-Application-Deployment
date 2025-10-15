@@ -31,7 +31,7 @@ jobs:
       - name: 📤 Load image into Minikube
         run: |
           echo "🚀 Loading image into Minikube..."
-          minikube image load lahuella-app:latest
+          minikube -p lahuella image load lahuella-app:latest
 
       - name: ⚙️ Apply Kubernetes manifests
         run: |
