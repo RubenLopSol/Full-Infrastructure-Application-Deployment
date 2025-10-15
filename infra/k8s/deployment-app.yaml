@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lahuella-app-deployment
+  namespace: default
+  labels:
+    app: lahuella-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lahuella-app
+  template:
+    metadata:
+      labels:
+        app: lahuella-app
+    spec:
+      containers:
+        - name: lahuella-app
+          image: lahuella-app:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: AWS_ACCESS_KEY_ID
+              value: "test"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "test"
+            - name: AWS_DEFAULT_REGION
+              value: "eu-west-1"
+            - name: AWS_ENDPOINT_URL
+              value: "http://midominio.local"
+            - name: DYNAMODB_TABLE_PRODUCTS
+              value: "la-huella-products"
+            - name: DYNAMODB_TABLE_COMMENTS
+              value: "la-huella-comments"
+            - name: DYNAMODB_TABLE_ANALYTICS
+              value: "la-huella-analytics"
+            - name: S3_BUCKET_REPORTS
+              value: "la-huella-sentiment-reports"
+            - name: S3_BUCKET_UPLOADS
+              value: "la-huella-uploads"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10

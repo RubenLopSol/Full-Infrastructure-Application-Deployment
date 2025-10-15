@@ -1,0 +1,20 @@
+service:
+  type: ClusterIP
+  port: 4566
+
+config:
+  SERVICES: "s3,dynamodb,sqs,cloudwatch"
+  DEBUG: "1"
+  AWS_DEFAULT_REGION: "eu-west-1"
+  DATA_DIR: "/var/lib/localstack/data"
+  PERSISTENCE: "1"
+
+resources:
+  limits:
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 512Mi
+
+dashboard:
+  enabled: false

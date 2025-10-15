@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: localstack-seed
+  namespace: localstack
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seeder
+          image: public.ecr.aws/aws-cli/aws-cli:latest
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -a; . /config/.env; set +a
+              /config/seed.sh
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              value: "test"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "test"
+            - name: AWS_DEFAULT_REGION
+              value: "eu-west-1"
+          volumeMounts:
+            - name: seed-config
+              mountPath: /config
+      volumes:
+        - name: seed-config
+          configMap:
+            name: seed-config
+            defaultMode: 0555
+            items:
+              - key: .env
+                path: .env
+              - key: seed.sh
+                path: seed.sh
