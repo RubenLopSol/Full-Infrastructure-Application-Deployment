@@ -18,3 +18,4 @@ spec:
                 name: lahuella-app-service
                 port:
                   number: 80
+
