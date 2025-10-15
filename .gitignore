@@ -1,6 +1,6 @@
 .next
 node_modules/**
 .env.local
-.github/workflows/**
+
 .terraform/
 .terraform.lock.hcl
