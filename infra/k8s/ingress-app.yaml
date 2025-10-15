@@ -8,14 +8,14 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: midominio.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: lahuella-app-service
-                port:
-                  number: 80
+   - host: midominio.local
+     http:
+       paths:
+         - path: /app
+           pathType: Prefix
+           backend:
+             service:
+               name: lahuella-app-service
+               port:
+                 number: 80
 
