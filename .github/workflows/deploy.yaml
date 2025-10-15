@@ -1,0 +1,52 @@
+name: CI/CD - Deploy to Minikube
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # permite ejecutarlo manualmente desde la UI de GitHub
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy App to Minikube
+    runs-on: self-hosted   # tu máquina actuará como runner de GitHub Actions
+
+    steps:
+      - name: 🧾 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Set up environment variables
+        run: |
+          export AWS_ACCESS_KEY_ID=test
+          export AWS_SECRET_ACCESS_KEY=test
+          export AWS_DEFAULT_REGION=eu-west-1
+          export AWS_ENDPOINT_URL=http://midominio.local
+
+      - name: 🐳 Build Docker image
+        run: |
+          echo "🚧 Building Docker image for the app..."
+          docker build -t lahuella-app:latest .
+          echo "📦 Image built successfully"
+
+      - name: 📤 Load image into Minikube
+        run: |
+          echo "🚀 Loading image into Minikube..."
+          minikube image load lahuella-app:latest
+
+      - name: ⚙️ Apply Kubernetes manifests
+        run: |
+          echo "📂 Applying Kubernetes manifests..."
+          kubectl apply -f infra/k8s/deployment-app.yaml
+          kubectl apply -f infra/k8s/service-app.yaml
+          kubectl apply -f infra/k8s/ingress-app.yaml
+          echo "✅ Application deployed successfully!"
+
+      - name: 🔍 Verify running pods
+        run: |
+          echo "🔎 Checking deployment status..."
+          kubectl get pods -o wide
+
+      - name: 🌐 Test application URL
+        run: |
+          kubectl get ingress
+          echo "Try accessing http://midominio.local"
