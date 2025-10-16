@@ -1,52 +1,149 @@
-name: CI/CD - Deploy to Minikube
-
 on:
   push:
     branches:
       - main
-  workflow_dispatch:  # permite ejecutarlo manualmente desde la UI de GitHub
+  workflow_dispatch:
+
+env:
+  # Secrets (valores almacenados en Settings > Secrets > Actions)
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+
+  # Variables no sensibles
+  CLUSTER_NAME: lahuella
+  NAMESPACE: localstack
+  DOMAIN: midominio.local
+  TERRAFORM_DIR: infra/terraform
+  K8S_DIR: infra/k8s
+  INIT_SCRIPT: script/init.sh
 
 jobs:
-  build-and-deploy:
-    name: Build & Deploy App to Minikube
-    runs-on: self-hosted   # tu máquina actuará como runner de GitHub Actions
-
+  full-deploy:
+    runs-on: self-hosted
+    name: Build Infra + Deploy App
     steps:
-      - name: 🧾 Checkout repository
+
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Set up environment variables
-        run: |
-          export AWS_ACCESS_KEY_ID=test
-          export AWS_SECRET_ACCESS_KEY=test
-          export AWS_DEFAULT_REGION=eu-west-1
-          export AWS_ENDPOINT_URL=http://midominio.local
+      # -------------------------------------------------------
+      # 🧱 INFRASTRUCTURE PHASE
+      # -------------------------------------------------------
+      - name: ================= INFRASTRUCTURE PHASE =================
+        run: echo "🏗️  Starting Infrastructure setup..."
 
-      - name: 🐳 Build Docker image
+      - name: Ensure Minikube cluster exists
         run: |
-          echo "🚧 Building Docker image for the app..."
+          echo "Checking cluster $CLUSTER_NAME..."
+          if ! minikube profile list | grep -q "$CLUSTER_NAME"; then
+            echo "Creating cluster $CLUSTER_NAME..."
+            minikube start -p $CLUSTER_NAME --cpus=4 --memory=6g
+          else
+            echo "✅ Cluster $CLUSTER_NAME already exists"
+          fi
+          kubectl config use-context $CLUSTER_NAME
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Install Localstack via Helm
+        run: |
+          echo "Installing Localstack..."
+          helm repo add localstack https://helm.localstack.cloud
+          helm repo update
+          helm upgrade --install localstack localstack/localstack \
+            --namespace $NAMESPACE \
+            --create-namespace \
+            -f $K8S_DIR/localstack-values.yaml
+          echo "⏳ Waiting for Localstack pod to be ready..."
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=localstack -n $NAMESPACE --timeout=180s
+
+      - name: Enable Ingress Controller and create Ingress
+        run: |
+          echo "Checking NGINX ingress addon for Minikube..."
+          if ! minikube addons list -p $CLUSTER_NAME | grep -q "ingress.*enabled"; then
+            echo "Enabling ingress addon..."
+            minikube addons enable ingress -p $CLUSTER_NAME
+            echo "Waiting for ingress controller to be ready..."
+            kubectl wait --namespace ingress-nginx \
+              --for=condition=Ready pod \
+              --selector=app.kubernetes.io/component=controller \
+              --timeout=180s
+          else
+            echo "✅ Ingress addon already enabled"
+          fi
+
+          echo "Creating Ingress for $DOMAIN..."
+          kubectl apply -f $K8S_DIR/ingress.yaml
+
+          IP=$(minikube ip -p $CLUSTER_NAME)
+          echo "Ensuring /etc/hosts contains $DOMAIN -> $IP"
+          if ! grep -q "$DOMAIN" /etc/hosts; then
+            echo "$IP $DOMAIN" | sudo tee -a /etc/hosts
+            echo "✅ Added $DOMAIN to /etc/hosts"
+          else
+            echo "✅ $DOMAIN already present in /etc/hosts"
+          fi
+
+      - name: Apply Terraform Infrastructure
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: |
+          echo "Initializing Terraform..."
+          tfenv use 1.5.5 || true
+          terraform init -upgrade
+          terraform apply -auto-approve
+          echo "✅ Terraform applied successfully"
+
+      - name: Validate Localstack resources
+        run: |
+          echo "Validating Localstack resources..."
+          awslocal --endpoint-url=http://$DOMAIN s3 ls
+          awslocal --endpoint-url=http://$DOMAIN dynamodb list-tables
+          awslocal --endpoint-url=http://$DOMAIN sqs list-queues
+          awslocal --endpoint-url=http://$DOMAIN logs describe-log-groups
+          echo "✅ Validation completed successfully"
+
+      - name: Seed DynamoDB tables if empty
+        run: |
+          if ! aws --endpoint-url=http://$DOMAIN dynamodb list-tables | grep -q la_huella_products; then
+            echo "Populating initial data..."
+            bash $INIT_SCRIPT
+            echo "✅ init.sh executed successfully"
+          else
+            echo "✅ Tables already initialized"
+          fi
+
+      # -------------------------------------------------------
+      # 🚀 APPLICATION PHASE
+      # -------------------------------------------------------
+      - name: ================= APPLICATION PHASE =================
+        run: echo "🚀 Starting Application Deployment..."
+
+      - name: Build Docker image
+        run: |
+          echo "Building Docker image for the app..."
           docker build -t lahuella-app:latest .
-          echo "📦 Image built successfully"
+          echo "Image built successfully"
 
-      - name: 📤 Load image into Minikube
+      - name: Load image into Minikube
         run: |
-          echo "🚀 Loading image into Minikube..."
-          minikube -p lahuella image load lahuella-app:latest
+          echo "Loading image into Minikube..."
+          minikube -p $CLUSTER_NAME image load lahuella-app:latest
 
-      - name: ⚙️ Apply Kubernetes manifests
+      - name: Apply Kubernetes manifests
         run: |
-          echo "📂 Applying Kubernetes manifests..."
-          kubectl apply -f infra/k8s/deployment-app.yaml
-          kubectl apply -f infra/k8s/service-app.yaml
-          kubectl apply -f infra/k8s/ingress-app.yaml
+          echo "Applying Kubernetes manifests..."
+          kubectl apply -f $K8S_DIR/deployment-app.yaml
+          kubectl apply -f $K8S_DIR/service-app.yaml
+          kubectl apply -f $K8S_DIR/ingress-app.yaml
           echo "✅ Application deployed successfully!"
 
-      - name: 🔍 Verify running pods
+      - name: Verify running pods & ingress
         run: |
-          echo "🔎 Checking deployment status..."
-          kubectl get pods -o wide
+          echo "Checking deployment status..."
+          kubectl get pods -A -o wide
+          kubectl get ingress -A
 
-      - name: 🌐 Test application URL
+      - name: ================= SUMMARY =================
         run: |
-          kubectl get ingress
-          echo "Try accessing http://midominio.local"
+          echo "🎯 Application available at: http://$DOMAIN/app"
+          echo "✅ Infrastructure & application deployed successfully!"

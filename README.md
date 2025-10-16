@@ -1,4 +1,4 @@
-# 🧩 Del commit al despliegue sin drama
+# Del commit al despliegue sin drama
 
 ### Autor: Rubén López
 
