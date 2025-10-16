@@ -14,15 +14,29 @@ spec:
           command: ["/bin/sh","-c"]
           args:
             - |
+              echo "Starting Localstack seed job..."
+              set -euo pipefail
               set -a; . /config/.env; set +a
-              /config/seed.sh
-          env:
-            - name: AWS_ACCESS_KEY_ID
-              value: "test"
-            - name: AWS_SECRET_ACCESS_KEY
-              value: "test"
-            - name: AWS_DEFAULT_REGION
-              value: "eu-west-1"
+
+              echo "Checking Localstack health endpoint..."
+              for i in {1..10}; do
+                if curl -s http://localstack.localstack:4566/_localstack/health | grep -q '"running"'; then
+                  echo "✅ Localstack is healthy."
+                  break
+                fi
+                echo "⏳ Attempt $i/10: Localstack not ready yet..."
+                sleep 5
+              done
+
+              echo "Verifying or creating S3 state bucket: $S3_STATE_BUCKET ..."
+              if aws --endpoint-url=http://localstack.localstack:4566 s3api head-bucket --bucket "$S3_STATE_BUCKET" 2>/dev/null; then
+                echo "✅ Bucket '$S3_STATE_BUCKET' already exists."
+              else
+                aws --endpoint-url=http://localstack.localstack:4566 s3api create-bucket --bucket "$S3_STATE_BUCKET"
+                echo "✅ Bucket '$S3_STATE_BUCKET' created successfully."
+              fi
+
+              echo "Seed job completed successfully!"
           volumeMounts:
             - name: seed-config
               mountPath: /config
@@ -36,3 +50,4 @@ spec:
                 path: .env
               - key: seed.sh
                 path: seed.sh
+
