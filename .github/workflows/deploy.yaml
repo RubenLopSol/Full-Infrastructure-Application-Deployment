@@ -44,7 +44,7 @@ jobs:
           fi
           kubectl config use-context $CLUSTER_NAME
           kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-
+          
       - name: Install Localstack via Helm
         run: |
           echo "Installing Localstack..."
@@ -54,8 +54,21 @@ jobs:
             --namespace $NAMESPACE \
             --create-namespace \
             -f $K8S_DIR/localstack-values.yaml
-          echo "⏳ Waiting for Localstack pod to be ready..."
-          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=localstack -n $NAMESPACE --timeout=180s
+
+          echo "⏳ Giving Kubernetes a few seconds to register Localstack pods..."
+          sleep 15
+
+          echo "Checking if Localstack pods are visible..."
+          kubectl get pods -n $NAMESPACE || true
+
+          echo "⏳ Waiting for Localstack pod to be ready (up to 3 minutes)..."
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=localstack -n $NAMESPACE --timeout=180s || {
+            echo "⚠️ Localstack pod not ready yet, retrying once..."
+            sleep 10
+            kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=localstack -n $NAMESPACE --timeout=120s
+          }
+
+          echo "✅ Localstack deployment confirmed running."
 
       - name: Enable Ingress Controller and create Ingress
         run: |
