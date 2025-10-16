@@ -63,14 +63,18 @@ jobs:
           if ! minikube addons list -p $CLUSTER_NAME | grep -q "ingress.*enabled"; then
             echo "Enabling ingress addon..."
             minikube addons enable ingress -p $CLUSTER_NAME
-            echo "Waiting for ingress controller to be ready..."
-            kubectl wait --namespace ingress-nginx \
-              --for=condition=Ready pod \
-              --selector=app.kubernetes.io/component=controller \
-              --timeout=180s
           else
             echo "✅ Ingress addon already enabled"
           fi
+
+          echo "⏳ Waiting for ingress controller pods to be ready..."
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=Ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
+
+          echo "⏳ Waiting for admission webhook to be ready..."
+          kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=180s
 
           echo "Creating Ingress for $DOMAIN..."
           kubectl apply -f $K8S_DIR/ingress.yaml
@@ -83,6 +87,7 @@ jobs:
           else
             echo "✅ $DOMAIN already present in /etc/hosts"
           fi
+
 
       - name: Apply Terraform Infrastructure
         working-directory: ${{ env.TERRAFORM_DIR }}
