@@ -88,6 +88,14 @@ jobs:
             echo "✅ $DOMAIN already present in /etc/hosts"
           fi
 
+      - name: Create S3 bucket for Terraform remote state (Job)
+        run: |
+          echo "Creating S3 remote state bucket via Kubernetes Job..."
+          kubectl apply -f $K8S_DIR/configmap.yaml
+          kubectl apply -f $K8S_DIR/job_exe_seed.yaml
+          echo "⏳ Waiting for job to complete..."
+          kubectl wait --for=condition=complete job/localstack-seed -n $NAMESPACE --timeout=120s
+          echo "✅ Terraform remote state bucket ready"
 
       - name: Apply Terraform Infrastructure
         working-directory: ${{ env.TERRAFORM_DIR }}
