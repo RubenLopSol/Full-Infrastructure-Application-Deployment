@@ -93,9 +93,20 @@ jobs:
           echo "Creating S3 remote state bucket via Kubernetes Job..."
           kubectl apply -f $K8S_DIR/configmap.yaml
           kubectl apply -f $K8S_DIR/job_exe_seed.yaml
-          echo "⏳ Waiting for job to complete..."
-          kubectl wait --for=condition=complete job/localstack-seed -n $NAMESPACE --timeout=120s
-          echo "✅ Terraform remote state bucket ready"
+          
+          echo "⏳ Waiting for job to complete (up to 5 minutes)..."
+          if ! kubectl wait --for=condition=complete job/localstack-seed -n $NAMESPACE --timeout=300s; then
+            echo "⚠️ Job did not complete successfully. Checking logs..."
+            kubectl logs job/localstack-seed -n $NAMESPACE || true
+          fi
+          
+          echo "🔍 Verifying bucket creation..."
+          if awslocal --endpoint-url=http://$DOMAIN s3api head-bucket --bucket la-huella-remote-state 2>/dev/null; then
+            echo "✅ Terraform remote state bucket is ready"
+          else
+            echo "❌ Bucket not found, please verify Localstack status."
+            exit 1
+          fi
 
       - name: Apply Terraform Infrastructure
         working-directory: ${{ env.TERRAFORM_DIR }}
