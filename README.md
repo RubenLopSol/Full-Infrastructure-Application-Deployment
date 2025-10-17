@@ -1,310 +1,205 @@
-# Del commit al despliegue sin drama
+# Full Infrastructure & Application Deployment — *La Huella*
 
-### Autor: Rubén López
+### Autor: **Rubén López**
 
-### Misión: La Huella — Etapa 7
-
----
-
-## 1. Punto de partida
-
-Para este ejercicio, **partimos de una infraestructura ya desplegada previamente** en el clúster de Minikube (lahuella).
-En etapas anteriores se instalaron y configuraron:
-
-* **Localstack** (vía Helm), simulando servicios de AWS como S3, DynamoDB y SQS.
-* **Nginx Ingress Controller**, exponiendo los servicios bajo el dominio local `midominio.local`.
-* **Terraform**, que creó los recursos necesarios dentro de Localstack y almacenó su estado en un bucket S3.
-
-Por tanto, **el objetivo de este ejercicio no ha sido desplegar la infraestructura**, sino **hacer que la aplicación cobre vida sobre ella**, cerrando el ciclo completo de desarrollo y despliegue continuo.
+> Un pipeline CI/CD completo que despliega automáticamente toda una infraestructura y una aplicación sobre Kubernetes, usando Terraform, Helm, Localstack y GitHub Actions.
 
 ---
 
-## 2. Preparación de la aplicación
+## Descripción del proyecto
 
-El primer paso fue **ajustar la configuración de la aplicación** para que utilizara los endpoints del entorno ya existente:
+Este proyecto representa un **entorno DevOps automatizado de extremo a extremo**, diseñado para demostrar el ciclo completo de despliegue continuo (**CI/CD**) en un entorno local.
 
-* Se modificaron las variables de entorno para apuntar al endpoint de Localstack:
+Con un solo `git push`, el sistema:
 
-  ```env
-  AWS_ENDPOINT_URL=http://midominio.local
-  ```
-* En `next.config.js` se añadió el dominio a los `allowedOrigins`.
-* En los YAML de despliegue de Kubernetes se configuró también esta URL como variable de entorno para los pods.
+1. **Crea un clúster de Kubernetes (Minikube)** si no existe.
+2. **Despliega Localstack** (simulador de AWS) mediante Helm.
+3. **Crea los recursos de infraestructura** con Terraform (S3, DynamoDB, SQS, CloudWatch).
+4. **Ejecuta un Job en Kubernetes** para inicializar el bucket remoto del estado de Terraform.
+5. **Puebla las bases de datos** con datos de ejemplo (`init.sh`).
+6. **Construye la imagen Docker** de la aplicación.
+7. **Despliega la app** y la expone vía Ingress en `http://midominio.local/app`.
 
-De este modo, la aplicación puede comunicarse correctamente con los servicios simulados (S3, DynamoDB y SQS) de Localstack expuestos en `http://midominio.local`.
-
----
-
-## 3. Definición de los manifiestos de Kubernetes
-
-A continuación, se crearon los manifiestos YAML necesarios para el despliegue de la aplicación dentro del clúster:
-
-| Archivo               | Descripción                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------- |
-| `deployment-app.yaml` | Define el pod que ejecuta la aplicación (imagen Docker, variables de entorno y puertos). |
-| `service-app.yaml`    | Expone la aplicación dentro del clúster en el puerto 80.                                 |
-| `ingress-app.yaml`    | Publica la aplicación a través del dominio `midominio.local/app`.                        |
-
-> **Importante:**
-> Ya existía un Ingress que utilizaba `midominio.local/` para Localstack, por lo que se decidió servir la aplicación bajo la ruta `/app`, evitando conflicto con el path raíz `/`.
-
-Así, tras aplicar los manifiestos:
-
-* Localstack es accesible en `http://midominio.local/`
-* La aplicación en `http://midominio.local/app`
+ Este flujo demuestra la integración entre **Infraestructura como Código**, **Observabilidad básica**, **CI/CD**, y **Kubernetes**, todo dentro de un entorno local reproducible.
 
 ---
 
-## 4. Pipeline CI/CD con GitHub Actions
+## Arquitectura general
 
-Para automatizar el despliegue, se configuró un workflow en GitHub Actions (`.github/workflows/deploy.yaml`) con las siguientes etapas:
-
-1. **Checkout del repositorio.**
-2. **Verificación del estado del clúster Minikube.**
-
-   * Se asegura que el perfil `lahuella` está corriendo (`minikube -p lahuella status`).
-3. **Construcción de la imagen Docker** a partir del `Dockerfile` incluido en el repositorio.
-4. **Carga de la imagen en Minikube:**
-
-   ```bash
-   minikube -p lahuella image load lahuella-app:latest
-   ```
-5. **Despliegue de los manifiestos Kubernetes:**
-
-   ```bash
-   kubectl apply -f infra/k8s/
-   ```
-6. **Verificación del estado del pod y del Ingress.**
-
-![Actions](/fotos/github-actions.png)
-
----
-
-## 5. Registro y ejecución del runner local
-
-Para ejecutar el pipeline, se registró un **runner self-hosted** en el repositorio de GitHub (`RubenLopSol/eu-devops-7-la-huella`):
-
-```bash
-./config.sh --url https://github.com/RubenLopSol/eu-devops-7-la-huella --token <TOKEN>
-./run.sh
+```
+┌────────────────────────────────────────────┐
+│              GitHub Actions                │
+│--------------------------------------------│
+│ 1. Minikube + Namespace setup              │
+│ 2. Helm install (Localstack)               │
+│ 3. ConfigMap + Job (Bucket S3 remoto)      │
+│ 4. Terraform apply                         │
+│ 5. init.sh (DynamoDB seeding)              │
+│ 6. Docker build + deploy in K8s            │
+└────────────────────────────────────────────┘
+           ↓
+┌────────────────────────────────────────────┐
+│               Kubernetes (Minikube)        │
+│--------------------------------------------│
+│  - Localstack (simula AWS)                 │
+│  - Terraform Infra (S3, DynamoDB, SQS)     │
+│  - FastAPI App desplegada (Next.js + API)  │
+│  - NGINX Ingress → http://midominio.local  │
+└────────────────────────────────────────────┘
 ```
 
-El runner se asoció al repositorio y quedó en estado **Online (Idle)**, esperando jobs.
-De esta forma, cada `git push` a la rama `main` dispara automáticamente el despliegue de la aplicación sobre el clúster local.
+---
+
+## Tecnologías y herramientas usadas
+
+| Categoría                       | Herramienta                            |
+| ------------------------------- | -------------------------------------- |
+| **Infraestructura local**       | 🐳 Minikube                            |
+| **Simulación de AWS**           | 🧩 Localstack (vía Helm)               |
+| **Infraestructura como Código** | 🌍 Terraform                           |
+| **Contenedores**                | 🐋 Docker                              |
+| **Orquestación**                | ☸️ Kubernetes                          |
+| **CI/CD**                       | ⚙️ GitHub Actions (self-hosted runner) |
+| **Lenguaje principal**          | 🧠 Python / FastAPI + Next.js          |
+| **Scripts de inicialización**   | Bash (`init.sh`)                       |
 
 ---
 
-## 6. Inserción de datos en la base de datos simulada
+## Workflow principal (`deploy.yaml`)
 
-Antes de ejecutar el workflow, se pobló DynamoDB con datos de ejemplo mediante el script:
+El pipeline completo ejecuta automáticamente todas las fases de despliegue.
+Aquí puedes ver el archivo que orquesta el proceso de principio a fin:
 
-```bash
-./scripts/init.sh
-```
-![lenght tabla](/fotos/lenght.png)
+<details>
+<summary>Ver workflow completo</summary>
 
-Este script inserta productos y comentarios en las tablas creadas por Terraform dentro de Localstack, dejando la infraestructura lista para ser consumida por la aplicación.
-
----
-
-## 7. Despliegue final y validación
-
-Tras ejecutar el workflow, los pasos fueron completados con éxito:
-
-* Imagen Docker construida correctamente.
-* Carga de la imagen en Minikube (`lahuella`).
-* Creación del Deployment, Service e Ingress.
-* Pod `lahuella-app-deployment` en estado **Running**.
-* Ingress visible en:
-
- ![ingress](/fotos/ingress.png)
-
-Finalmente, se validó el acceso:
-
-* `http://midominio.local/` → Localstack Dashboard
-* `http://midominio.local/app` → Aplicación desplegada y conectada a Localstack
-
-![ui](/fotos/ui.png)
-
----
-
-## 8. Conclusión
-
-Este ejercicio cierra el ciclo completo **“Del commit al despliegue sin drama”**, demostrando cómo:
-
-* Partiendo de una infraestructura ya desplegada (Minikube + Localstack + Terraform),
-* Se definieron los manifiestos YAML para la aplicación,
-* Se configuró un pipeline automatizado en GitHub Actions con un runner local,
-* Y se consiguió un despliegue funcional, reproducible y completamente automatizado de la aplicación sobre el clúster.
-
- **En resumen:**
-De un `git push` a la rama `main`, la app se construye, despliega y queda accesible en `http://midominio.local/app`, conectándose a servicios simulados en `Localstack`.
-
-## 9. Recursos:
-
-![ui](/fotos/kubectl.png)
-![terraform](/fotos/terraform.png)
-
--  deployment-app.yaml
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: lahuella-app-deployment
-  namespace: default
-  labels:
-    app: lahuella-app
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: lahuella-app
-  template:
-    metadata:
-      labels:
-        app: lahuella-app
-    spec:
-      containers:
-        - name: lahuella-app
-          image: lahuella-app:latest
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 3000
-          env:
-            - name: NODE_ENV
-              value: "production"
-            - name: AWS_ACCESS_KEY_ID
-              value: "test"
-            - name: AWS_SECRET_ACCESS_KEY
-              value: "test"
-            - name: AWS_DEFAULT_REGION
-              value: "eu-west-1"
-            - name: AWS_ENDPOINT_URL
-              value: "http://midominio.local"
-            - name: DYNAMODB_TABLE_PRODUCTS
-              value: "la-huella-products"
-            - name: DYNAMODB_TABLE_COMMENTS
-              value: "la-huella-comments"
-            - name: DYNAMODB_TABLE_ANALYTICS
-              value: "la-huella-analytics"
-            - name: S3_BUCKET_REPORTS
-              value: "la-huella-sentiment-reports"
-            - name: S3_BUCKET_UPLOADS
-              value: "la-huella-uploads"
-          readinessProbe:
-            httpGet:
-              path: /api/health
-              port: 3000
-            initialDelaySeconds: 10
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /api/health
-              port: 3000
-            initialDelaySeconds: 20
-            periodSeconds: 10
-
-```
-
--  ingress-app.yaml:
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: lahuella-app-ingress
-  namespace: default
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-spec:
-  ingressClassName: nginx
-  rules:
-   - host: midominio.local
-     http:
-       paths:
-         - path: /app
-           pathType: Prefix
-           backend:
-             service:
-               name: lahuella-app-service
-               port:
-                 number: 80
-
-
-```
-
--  service-app.yaml:
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: lahuella-app-service
-  namespace: default
-  labels:
-    app: lahuella-app
-spec:
-  selector:
-    app: lahuella-app
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 3000
-  type: ClusterIP
-
-```
-
--  deploy.yaml:
-```yaml
-name: CI/CD - Deploy to Minikube
-
 on:
   push:
     branches:
       - main
   workflow_dispatch:
 
-jobs:
-  build-and-deploy:
-    name: Build & Deploy App to Minikube
-    runs-on: self-hosted
+env:
+  # Secrets (almacenados en Settings > Secrets > Actions)
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
 
+  # Variables no sensibles
+  CLUSTER_NAME: lahuella
+  NAMESPACE: localstack
+  DOMAIN: midominio.local
+  TERRAFORM_DIR: infra/terraform
+  K8S_DIR: infra/k8s
+  INIT_SCRIPT: script/init.sh
+
+jobs:
+  full-deploy:
+    runs-on: self-hosted
+    name: Build Infra + Deploy App
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up environment variables
+      - name: ================= INFRASTRUCTURE PHASE =================
+        run: echo "🏗️  Starting Infrastructure setup..."
+      - name: Ensure Minikube cluster exists
         run: |
-          export AWS_ACCESS_KEY_ID=test
-          export AWS_SECRET_ACCESS_KEY=test
-          export AWS_DEFAULT_REGION=eu-west-1
-          export AWS_ENDPOINT_URL=http://midominio.local
-
+          echo "Checking cluster $CLUSTER_NAME..."
+          if ! minikube profile list | grep -q "$CLUSTER_NAME"; then
+            echo "Creating cluster $CLUSTER_NAME..."
+            minikube start -p $CLUSTER_NAME --cpus=4 --memory=6g
+          else
+            echo "✅ Cluster $CLUSTER_NAME already exists"
+          fi
+          kubectl config use-context $CLUSTER_NAME
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+      - name: Install Localstack via Helm
+        run: |
+          helm repo add localstack https://helm.localstack.cloud
+          helm repo update
+          helm upgrade --install localstack localstack/localstack \
+            --namespace $NAMESPACE \
+            --create-namespace \
+            -f $K8S_DIR/localstack-values.yaml
+          sleep 15
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=localstack -n $NAMESPACE --timeout=180s || {
+            sleep 10
+            kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=localstack -n $NAMESPACE --timeout=120s
+          }
+      - name: Enable Ingress Controller
+        run: |
+          if ! minikube addons list -p $CLUSTER_NAME | grep -q "ingress.*enabled"; then
+            minikube addons enable ingress -p $CLUSTER_NAME
+          fi
+          kubectl wait --namespace ingress-nginx --for=condition=Ready pod \
+            --selector=app.kubernetes.io/component=controller --timeout=180s
+          kubectl apply -f $K8S_DIR/ingress.yaml
+          IP=$(minikube ip -p $CLUSTER_NAME)
+          if ! grep -q "$DOMAIN" /etc/hosts; then
+            echo "$IP $DOMAIN" | sudo tee -a /etc/hosts
+          fi
+      - name: Create S3 bucket for Terraform remote state
+        run: |
+          kubectl apply -f $K8S_DIR/configmap.yaml
+          kubectl apply -f $K8S_DIR/job_exe_seed.yaml
+          kubectl wait --for=condition=complete job/localstack-seed -n $NAMESPACE --timeout=300s
+      - name: Apply Terraform Infrastructure
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: |
+          tfenv use 1.5.5 || true
+          terraform init -upgrade
+          terraform apply -auto-approve
       - name: Build Docker image
+        run: docker build -t lahuella-app:latest .
+      - name: Load image into Minikube
+        run: minikube -p $CLUSTER_NAME image load lahuella-app:latest
+      - name: Deploy Application
         run: |
-          echo " Building Docker image for the app..."
-          docker build -t lahuella-app:latest .
-          echo " Image built successfully"
+          kubectl apply -f $K8S_DIR/deployment-app.yaml
+          kubectl apply -f $K8S_DIR/service-app.yaml
+          kubectl apply -f $K8S_DIR/ingress-app.yaml
+          kubectl get pods -A
+          kubectl get ingress -A
+```
 
-      - name:  Load image into Minikube
-        run: |
-          echo " Loading image into Minikube..."
-          minikube -p lahuella image load lahuella-app:latest
+</details>
 
-      - name: Apply Kubernetes manifests
-        run: |
-          echo " Applying Kubernetes manifests..."
-          kubectl apply -f infra/k8s/deployment-app.yaml
-          kubectl apply -f infra/k8s/service-app.yaml
-          kubectl apply -f infra/k8s/ingress-app.yaml
-          echo " Application deployed successfully!"
+---
 
-      - name:  Verify running pods
-        run: |
-          echo " Checking deployment status..."
-          kubectl get pods -o wide
+## Resultado
 
-      - name:  Test application URL
-        run: |
-          kubectl get ingress
-          echo "Try accessing http://midominio.local"
+Al ejecutar el pipeline:
+
+* Terraform aplica toda la infraestructura en Localstack.
+* Los datos se inicializan correctamente.
+* La app se despliega en Kubernetes.
+* Todo el flujo termina con:
 
 ```
+🎯 Application available at: http://midominio.local/app
+✅ Infrastructure & application deployed successfully!
+```
+
+---
+
+## Qué demuestra este proyecto
+
+✔️ Creación automática de clúster y namespace.
+✔️ Despliegue de infraestructura simulada con Terraform + Localstack.
+✔️ Integración CI/CD completa con GitHub Actions (self-hosted).
+✔️ Despliegue de aplicación sobre Kubernetes.
+✔️ Ejemplo real de *Infrastructure as Code* + *Continuous Deployment*.
+
+---
+
+
+## Conclusión
+
+Este proyecto fue diseñado como ejercicio técnico, pero se ha convertido en una **demostración práctica de un pipeline DevOps real**, integrando:
+
+* Terraform (IaC)
+* Helm y Kubernetes (infraestructura dinámica)
+* Localstack (entorno AWS simulado)
+* GitHub Actions (CI/CD)
+
